@@ -8,36 +8,20 @@ import rioxarray
 import geopandas as gpd
 from pathlib import Path
 import utils
+
+if "snakemake" not in globals():
+    snakemake = utils.read_snakemake_rule(utils.SNAKEFILE_PATH, name="kartering_kem")
+
+input_fns = snakemake.input
+params = snakemake.params
+output_fns = snakemake.output
+
 #%%
 #load data
-base_folder = Path(r"N:\Projects\11209000\11209258\B. Measurements and calculations\GWS analyse\kartering")
-input_folder = base_folder / 'input'
-subsurface_model_fn = input_folder / 'base_data_shifted.nc'
-sm = xr.open_dataset(subsurface_model_fn).chunk({'x': 1000, 'y': 1000, 'layer': -1})
+sm = xr.open_dataset(input_fns.base_data_shifted_fn).chunk({'x': 1000, 'y': 1000, 'layer': -1})
 
 impact_factor = xr.zeros_like(sm.lithology.isel(layer=0))+0.8
 
-lithology_series = pd.Series({
-    "anthropogenic": 0,
-    "organic": 1,
-    "clay": 2,
-    "loam": 3,
-    "fine_sand": 5,
-    "medium_sand": 6,
-    "coarse_sand": 7,
-    "gravel": 8,
-    "shells": 9,
-    "other_sand": 11
-})
-
-doorlatend_enums = [0, 1, 5, 6, 7, 8, 9, 11]
-
-nl_shape_fn = r"P:\gis-data\provincie\2021_provincies_zonder_water.shp"
-nl_shape = gpd.read_file(nl_shape_fn)
-
-result_folder = base_folder / "resultaten"
-
-# sm['layer_tops'] = sm.thickness.cumsum(dim='layer') + sm.zbase
 sm['bots_onder_mv'] = sm.tops_onder_mv - sm.thickness
 
 # x = 185350
@@ -56,7 +40,7 @@ shallow_tops, shallow_thickness, shallow_lith = utils.select_layers(
     enddepth=bottom_selection_depth
 )
 
-sm['shallow_doorlatend_mask'] = shallow_lith.isin(doorlatend_enums)
+sm['shallow_doorlatend_mask'] = shallow_lith.isin(params.doorlatend_enums)
 sm['perc_shallow_doorlatend']  = (shallow_thickness.where(sm['shallow_doorlatend_mask']).sum(dim='layer') / shallow_thickness.sum(dim='layer'))
 
 shallow_doorlatend_threshold = 0.8
@@ -74,7 +58,7 @@ deep_tops, deep_thickness, deep_lith = utils.select_layers(
     enddepth=bottom_selection_depth
 )
 
-sm['deep_doorlatend_mask'] = deep_lith.isin(doorlatend_enums)
+sm['deep_doorlatend_mask'] = deep_lith.isin(params.doorlatend_enums)
 sm['perc_deep_doorlatend'] = (deep_thickness.where(sm['deep_doorlatend_mask']).sum(dim='layer') / deep_thickness.sum(dim='layer'))
 
 deep_doorlatend_threshold = 0.5
@@ -94,17 +78,18 @@ save_sm = sm[savecols]
 
 #do calculation
 with ProgressBar():
-    # sm = sm.where((sm.layer_tops- sm.surface_level) > -5, drop=True)
-    save_sm.to_netcdf(result_folder / "kartering_ondergrondklassen_criteria.nc",  encoding={v: {"zlib": True, "complevel": 4} for v in save_sm.data_vars})
-    # keep_sm = sm[['layer_tops', 'layer_bottoms', 'lithology', 
-    #               'shallow_doorlatend_mask','perc_shallow_doorlatend',
-    #               'deep_doorlatend_mask', 'perc_deep_doorlatend']].compute()
-    impact_factor = impact_factor.compute()
+    if params.save:
+        if params.coarsen > 1:
+            coarse_factor = int(params.coarsen)
+            save_sm = save_sm.isel(x = slice(None, None, coarse_factor),
+                                   y = slice(None, None, coarse_factor))  
+        save_sm.to_netcdf(output_fns.kem_data_fn,  encoding={v: {"zlib": True, "complevel": 4} for v in save_sm.data_vars})
+
+    #impact_factor = impact_factor.compute()
 
 #mask, only on land
 impact_factor.rio.write_crs("EPSG:28992", inplace=True)
-impact_factor = impact_factor.rio.clip(nl_shape.geometry, nl_shape.crs, drop=True, invert=False, all_touched=True)
-impact_factor.rio.to_raster(result_folder / "impact_factor_kem_teun.tif")
+impact_factor.rio.to_raster(output_fns.kem_output_fn)
 
 
 

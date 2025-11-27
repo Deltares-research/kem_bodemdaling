@@ -1,6 +1,6 @@
 [workspace]
 authors = ["Teun van Woerkom <teun.vanwoerkom@deltares.nl>"]
-channels = ["conda-forge"]
+channels = ["conda-forge", "bioconda"]
 name = "bodemdaling"
 platforms = ["win-64"]
 version = "0.1.0"
@@ -9,13 +9,19 @@ version = "0.1.0"
 
 [dependencies]
 matplotlib = ">=3.10.7,<4"
-xarray = ">=2025.10.1,<2026"
 geopandas = ">=1.1.1,<2"
 ipython = ">=9.6.0,<10"
 jupyter = ">=1.1.1,<2"
-dask = ">=2025.10.0,<2026"
-rioxarray = ">=0.20.0,<0.21"
 rasterio = ">=1.4.3,<2"
 netcdf4 = ">=1.7.3,<2"
 tqdm = ">=4.67.1,<5"
 bottleneck = ">=1.6.0,<2"
+pip = ">=25.3,<26"
+snakemake = ">=9.13.7,<10"
+numpy = "2.2.*"
+xarray = "2024.11.0.*"
+dask = ">=2024.0.0"
+rioxarray = ">=0.17.0"
+xugrid = ">=0.14.3,<0.15"
+mapbox_earcut = ">=1.0.3,<2"
+imod = ">=1.0.0.post1,<2"

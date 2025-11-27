@@ -8,17 +8,20 @@ import geopandas as gpd
 from dask.diagnostics import ProgressBar
 import utils
 
-base_folder = Path(r"N:\Projects\11209000\11209258\B. Measurements and calculations\GWS analyse")
+if "snakemake" not in globals():
+    snakemake = utils.read_snakemake_rule(utils.SNAKEFILE_PATH, name="kartering_compactie")
 
+input_fns = snakemake.input
+params = snakemake.params
+output_fns = snakemake.output
 #%%
 max_depth = -8
 save_coarse = False
 
 #load data
 #ondergrond data
-subsurface_model_fn = base_folder / "AtlantisRuns/atlans_subsurface_model_Knaake.nc"
 # Optimize chunking for better performance
-sm = xr.open_dataset(subsurface_model_fn).chunk(chunks={"x": 500, "y": 500, 'layer': -1})
+sm = xr.open_dataset(input_fns.atlans_fn).chunk(chunks={"x": 500, "y": 500, 'layer': -1})
 tot_thickness = sm.thickness.cumsum('layer').where(sm.thickness.notnull())
 sm['tops_onder_mv'] = tot_thickness - tot_thickness.max('layer')
 sm['bots_onder_mv'] = sm.tops_onder_mv - sm.thickness
@@ -30,9 +33,6 @@ pleistoceen_onder_mv = (sm.surface_level - sm.domainbase).fillna(0).compute()
 sm['pleistoceen_mask'] = sm.center_onder_mv < pleistoceen_onder_mv
 sm = sm.sel(layer=sm.layer[::-1])
 
-nl_shape_fn = r"P:\gis-data\provincie\2021_provincies_zonder_water.shp"
-nl_shape = gpd.read_file(nl_shape_fn)
-
 
 #glg for now
 ##################
@@ -41,25 +41,23 @@ nl_shape = gpd.read_file(nl_shape_fn)
 #EDIT: DIE BESTAAT NIET HAHA. HOE DAN? 
 
 ###################
-#ALS IK DE GLG GEBRUIK VAN DE LHM IS DIE HOGER DAN DE L1 TOP? HOE DAN?
-year = 2022
-lhm_folder = Path(r"N:\Projects\11209000\11209258\B. Measurements and calculations\GWS analyse\kartering\lhm_data")
-gw_data_fn = lhm_folder / f"lhm_433_heads_l1_{year}.nc"
-top_fn = lhm_folder / 'TOP_L1_LHM433.tif'
-gw_stand_nap = xr.open_dataarray(gw_data_fn).chunk(x=200, y = 200, time = 50)
-glg_nap = utils.calc_avg_lowest_three(gw_stand_nap)
-top_l1_da = xr.open_dataarray(top_fn).isel(band=0).drop_vars('band')
-glg_stand_mv = glg_nap - top_l1_da
-with ProgressBar():
-    glg_stand_mv =  glg_stand_mv.interp(x=sm.x, y=sm.y, method='nearest').compute()
+# #ALS IK DE GLG GEBRUIK VAN DE LHM IS DIE HOGER DAN DE L1 TOP? HOE DAN?
+# year = 2022
+# lhm_folder = Path(r"N:\Projects\11209000\11209258\B. Measurements and calculations\GWS analyse\kartering\lhm_data")
+# gw_data_fn = lhm_folder / f"lhm_433_heads_l1_{year}.nc"
+# top_fn = lhm_folder / 'TOP_L1_LHM433.tif'
+# gw_stand_nap = xr.open_dataarray(gw_data_fn).chunk(x=200, y = 200, time = 50)
+# glg_nap = utils.calc_avg_lowest_three(gw_stand_nap)
+# top_l1_da = xr.open_dataarray(top_fn).isel(band=0).drop_vars('band')
+# glg_stand_mv = glg_nap - top_l1_da
+# with ProgressBar():
+#     glg_stand_mv =  glg_stand_mv.interp(x=sm.x, y=sm.y, method='nearest').compute()
 
-sm['glg_mv'] = glg_stand_mv
-
-results_folder = base_folder / "kartering" / "resultaten"
-
-#################################
-#FLEVOLAND IS ONVERWACHT HEFTIG! QUA SCORE
-####################################
+#DIT IS NIET GOED WAARSCHIJNLIJK!
+##########################
+sm['phreatic_level'] = sm.phreatic_level.where(sm.phreatic_level > -100)
+sm['glg_mv'] = sm.phreatic_level - sm.surface_level
+########################
 # %%
 #calculate compactie score
 
@@ -112,11 +110,8 @@ sm['eff_stress'] = eff_stress
 sm['layer_compactie_score'] = score_per_layer
 sm['compactie_score'] = score.where(sm.lithology.notnull().any('layer'))
 
-score_threshold = 1
-sm['compactie_score'] = sm['compactie_score'].where(sm['compactie_score'] > score_threshold)
-
+sm['compactie_score'] = sm['compactie_score'].where(sm['compactie_score'] > 0)
 sm.rio.write_crs("EPSG:28992", inplace=True)
-sm = sm.rio.clip(nl_shape.geometry, nl_shape.crs, drop=True, invert=False, all_touched=True)
 
 savecols = ['lithology', 'tops_onder_mv', 'bots_onder_mv', 'pleistoceen_mask',
              'glg_mv', 'eff_stress', 'cr', 'sw', 'layer_compactie_score', 'compactie_score']
@@ -124,14 +119,13 @@ savecols = ['lithology', 'tops_onder_mv', 'bots_onder_mv', 'pleistoceen_mask',
 #%%
 print("Computing final result with progress bar...")
 with ProgressBar():
-    # if save_coarse:
-    #     coarse_factor = 20
-    #     sm_cooarse = sm[savecols].sel(x=slice(None, None, coarse_factor), 
-    #                         y=slice(None, None, coarse_factor))
-    #     sm_cooarse.to_netcdf(results_folder / f"compactie_data_coarse.nc")
-    # else:
-    #     sm[savecols].to_netcdf(results_folder / f"compactie_data_full.nc")
+    save_sm = sm[savecols]
+    if params.coarsen > 1:
+        coarse_factor = int(params.coarsen)
+        save_sm = sm.isel(x = slice(None, None, coarse_factor),
+                                y = slice(None, None, coarse_factor))  
+        save_sm.to_netcdf(output_fns.compactie_data_fn,  encoding={v: {"zlib": True, "complevel": 4} for v in save_sm.data_vars})
 
-    sm['compactie_score'].rio.to_raster(results_folder / f"compactie_score.tif")
+    sm['compactie_score'].rio.to_raster(output_fns.compactie_output_fn)
 
 # %%

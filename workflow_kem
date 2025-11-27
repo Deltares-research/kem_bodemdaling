@@ -1,0 +1,220 @@
+
+#%%
+from pathlib import Path
+import pandas as pd
+
+# Input folders
+base_folder = Path(r"P:\nl2120veen\kartering")
+input_folder = base_folder / "input"
+uitsluiting_folder = input_folder.parent / 'uitsluitingsgebieden'
+result_folder = base_folder / "resultaten"
+initial_result_map = result_folder / "initial_maps"
+masked_result_map = result_folder / "masked_maps"
+lhm_folder = base_folder / "lhm_data"
+final_result_map = result_folder / "final_maps"
+
+# Basefiles
+atlans_fn = input_folder / "atlans_subsurface_model_Knaake.nc"
+uitstotend_fn = input_folder / "nbp_coverage.nc"
+novex_fn = uitsluiting_folder / 'woningbouw_NOVEX' / "TOP10NL_NOVEX_combined.shp"
+watervlakte_fn = input_folder / "watervlakte.gpkg"
+peilgestuurd_fn = uitsluiting_folder / "peilgestuurd.shp"
+comb_masks_fn = uitsluiting_folder / "combined_masks.nc"
+nl_shape_fn = r"P:\gis-data\provincie\2021_provincies_zonder_water.shp"
+
+#other input files
+base_data_shifted_fn = input_folder / "base_data_shifted.nc"
+lhm_heads_fn = lhm_folder / "lhm_433_heads_l1_{year}.nc"
+lhm_top_fn = lhm_folder / 'TOP_L1_LHM433.tif'
+peilgebieden_fn = input_folder / "peilgebied.gpkg"
+drainage_fn = uitsluiting_folder / "drainage.shp"
+
+#Parameters
+bebouwing_fraction_threshold = 0.5
+water_fraction_threshold = 0.5
+organisch_threshold = 0.25
+
+doorlatend_enums = [0, 1, 5, 6, 7, 8, 9, 11]
+
+#Save Parameters
+save = False
+coarsen = 10
+oxidatie_years = [2012, 2013, 2015, 2018]
+
+#Output files
+coarse_namedict = {True: f"coarseres_f{coarsen}", False: "fullres"}
+kem_data_fn = None # initial_result_map / f"kartering_kem_{coarse_namedict[coarsen>1]}.nc"
+kem_output_fn = initial_result_map / f"kem_score.tif"
+
+oxidatie_data_fn = None#initial_result_map / (f"kartering_oxidatie_{coarse_namedict[coarsen>1]}_"+"{year}.nc")
+oxidatie_output_fn = initial_result_map / "oxidatie_{year}_score.tif"
+oxidatie_masked_fn = masked_result_map / "oxidatie_{year}_score_masked.tif"
+
+compactie_data_fn = initial_result_map / (f"kartering_compactie_{coarse_namedict[coarsen>1]}.nc")
+compactie_output_fn = initial_result_map / "compactie_score.tif"
+compactie_masked_fn = masked_result_map / "compactie_score_masked.tif"
+
+krimp_data_fn = initial_result_map / (f"kartering_krimp_{coarse_namedict[coarsen>1]}.nc")
+krimp_output_fn = initial_result_map / "krimp_score.tif"
+krim_masked_fn = masked_result_map / "krimp_score_masked.tif"
+
+output_fn = initial_result_map / "{type}_score.tif"
+masked_output_fn = masked_result_map / "{type}_score_masked.tif"
+
+kem_agg_output = final_result_map / "kem_score_agg_masked.gpkg"
+comb_kartering_output = final_result_map / "combined_kartering_{year}.tif"
+
+#masking
+mask_dict = {'kem': ['opnemend', 'bebouwing', 'water', 'nl'],
+             'oxidatie': ['opnemend', 'bebouwing', 'water', 'nl'],
+             'compactie': ['opnemend', 'bebouwing', 'water', 'nl'],
+             'krimp': ['opnemend', 'bebouwing', 'water', 'nl']}
+
+threshold_dict = {'kem': 0,
+                  'oxidatie': 1.0,
+                  'compactie': 1.0,
+                  'krimp': 1.0}
+
+# Snakefile rules
+additions = ['kem', *[f'oxidatie_{year}' for year in oxidatie_years], 'compactie', 'krimp']
+
+#legends 
+legend_inputs = {'oxidatie': [masked_result_map / f'oxidatie_{year}_score_masked.tif' for year in [2013, 2015]], 
+                'compactie': masked_result_map / 'compactie_score_masked.tif', 
+                'krimp': masked_result_map / 'krimp_score_masked.tif'}
+
+legend_output_fn = result_folder / 'legends' / '{type}_legend.txt'
+
+#combine maps
+factor_weights = {'oxidatie': 1,
+           'compactie': 1,
+           'krimp': 1}
+
+# rule run_all:
+#     input:
+#         kem_output_fn,
+#         expand(oxidatie_output_fn, year = oxidatie_years),
+#         compactie_output_fn,
+#         krimp_output_fn,
+
+rule run_all:
+    input:
+        expand(masked_output_fn, type = additions),
+        expand(legend_output_fn, type = ['oxidatie', 'compactie', 'krimp']),
+        expand(comb_kartering_output, year = oxidatie_years)
+
+rule preprocess_input:
+    input:
+        atlans_fn = atlans_fn,
+        uitstotend_fn = uitstotend_fn,
+        novex_fn = novex_fn,
+        watervlakte_fn = watervlakte_fn,
+        nl_shape_fn = nl_shape_fn,
+        peilgestuurd_fn = peilgestuurd_fn
+    params:
+        bebouwing_fraction_threshold = bebouwing_fraction_threshold,
+        water_fraction_threshold = water_fraction_threshold
+    output:
+        comb_masks_fn = comb_masks_fn
+    script:
+        "src/preprocess_input_data.py"
+
+rule kartering_kem:
+    input:
+        base_data_shifted_fn = base_data_shifted_fn,
+    params:
+        doorlatend_enums = doorlatend_enums,
+        save = save,
+        coarsen = coarsen,
+    output:
+        #kem_data_fn = kem_data_fn,
+        kem_output_fn = kem_output_fn
+    script:
+        "src/kartering_kem.py"
+
+rule kartering_oxidatie:
+    input:
+        base_data_shifted_fn = base_data_shifted_fn,
+        lhm_heads_fn = lhm_heads_fn,
+        lhm_top_fn = lhm_top_fn
+    params:
+        organisch_threshold = organisch_threshold,
+        save = save,
+        coarsen = coarsen,
+    output:
+        #oxidatie_data_fn = oxidatie_data_fn,
+        oxidatie_output_fn = oxidatie_output_fn,
+    script:
+        "src/kartering_oxidatie.py"
+
+rule kartering_compactie:
+    input:
+        atlans_fn = atlans_fn
+    params:
+        coarsen = coarsen,
+    output:
+        compactie_data_fn = compactie_data_fn,
+        compactie_output_fn = compactie_output_fn
+    script:
+        "src/kartering_compactie.py"
+
+rule kartering_krimp:
+    input:
+        atlans_fn = atlans_fn
+    params:
+        coarsen = coarsen
+    output:
+        krimp_data_fn = krimp_data_fn,
+        krimp_output_fn = krimp_output_fn
+    script:
+        "src/kartering_krimp.py"
+
+rule mask_outputs:
+    input:
+        comb_masks_fn = comb_masks_fn,
+        data_fn = output_fn,
+    params:
+        mask_categories = lambda wildcards: mask_dict[wildcards.type.split('_')[0]],
+        score_threshold = lambda wildcards: threshold_dict[wildcards.type.split('_')[0]],
+    output:
+        masked_fn = masked_output_fn
+    script:
+        "src/mask_output_to_maps.py"
+
+rule make_legends:
+    input:
+        input_map = lambda wildcards: legend_inputs[wildcards.type]
+    output:
+        legend_fn = legend_output_fn
+    script:
+        "src/make_legends.py"
+
+rule combine_kartering:
+    input:
+        oxidatie_fn = oxidatie_masked_fn,
+        compactie_fn = compactie_masked_fn,
+        krimp_fn = krim_masked_fn,
+        legend_fns = expand(legend_output_fn, type = ['oxidatie', 'compactie', 'krimp'])
+    params:
+        factor_weights = factor_weights
+    output:
+        comb_kartering_output = comb_kartering_output
+    script:
+        "src/combine_kartering.py"
+
+rule mask_aggregate_kem:
+    input:
+        comb_masks_fn = comb_masks_fn,
+        data_fn = kem_output_fn,
+        peilgebieden_fn = peilgebieden_fn,
+        drainage_fn = drainage_fn
+    output:
+        kem_agg_output = kem_agg_output
+    script:
+        "src/mask_and_aggregate_kem.py"
+
+
+
+
+
+# %%

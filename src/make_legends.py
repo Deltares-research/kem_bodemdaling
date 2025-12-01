@@ -30,12 +30,20 @@ cmap_colors = [tuple(int(255*c) for c in cmap(i)[:4]) for i in range(cmap.N)]
 
 labels = ["Zeer laag", "Laag", "Gemiddeld", "Hoog", "Zeer hoog"]
 
-utils.write_qgis_legend(
+utils.write_qgis_raster_legend(
     filename=output_fns.legend_fn,
     x_values=quantile_values[input_data.name].tolist(),
     colors=cmap_colors,
     labels=labels,
     interpolation="DISCRETE"
 )   
+
+utils.write_qgis_pol_legend(
+    filename=output_fns.legend_fn.replace(".txt", "_pol.qml"),
+    x_values=quantile_values[input_data.name].tolist(),
+    colors=cmap_colors,
+    labels=labels,
+    attribute_name="agg_value")
+
 
 # %%

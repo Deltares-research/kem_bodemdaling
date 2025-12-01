@@ -8,8 +8,6 @@ from scipy import ndimage
 import utils
 import xugrid as xu
 
-
-
 #%%
 if "snakemake" not in globals():
     snakemake = utils.read_snakemake_rule(utils.SNAKEFILE_PATH, name="mask_outputs")

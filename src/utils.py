@@ -9,6 +9,7 @@ from pathlib import Path
 import geopandas as gpd
 import shapely.geometry as gmt
 import rasterio
+import xml.etree.ElementTree as ET
 
 SNAKEFILE_PATH = r"C:\git_repos\bodemdaling\workflow_kem"
 
@@ -49,6 +50,20 @@ def read_snakemake_rule(path, name: str) -> "snakemake.rules.Rule":
         raise ValueError(
             f"Rule {name} not in snakefile. Available rules: {', '.join(rules.keys())}")
     return rule
+
+def replace_wildcards_in_snakemake(snakemake_obj, replace_dict):
+    keys = ['input', 'params', 'output']
+    for key in keys:
+        if not hasattr(snakemake_obj, key):
+            continue
+        items = getattr(snakemake_obj, key)
+
+        for item in items._names.keys():
+            item_str = str(getattr(items, item))
+            for replace_key, replace_val in replace_dict.items():
+                item_str = item_str.replace(replace_key, replace_val)
+            setattr(items, item, item_str)
+    return snakemake_obj
 
 def mask_to_geodataframe(mask_da):
     """Convert a boolean mask DataArray to a GeoDataFrame of polygons."""
@@ -113,7 +128,7 @@ def calculate_fraction_of_gdf(input_gdf, template_da):
     overlap = pd.merge(weights_source, dummy_df, left_on='source_index', right_index=True, how='right')
 
     fraction_per_cell = (type(template_da)).from_series(overlap.set_index(list(template_da.dims))['weight'])
-    fraction_per_cell.rio.set_crs(28992, inplace=True)
+    fraction_per_cell.rio.write_crs(28992, inplace=True)
     return fraction_per_cell
 
 def select_layers(lith_col, layer_bottoms, layer_tops, startdepth, enddepth):
@@ -196,7 +211,7 @@ def calc_avg_lowest_three(da):
     
     return mean_lowest_values
 
-def write_qgis_legend(filename, x_values, colors, labels, interpolation="DISCRETE"):
+def write_qgis_raster_legend(filename, x_values, colors, labels, interpolation="DISCRETE"):
     """
     Write a QGIS legend export file.
 
@@ -222,7 +237,101 @@ def write_qgis_legend(filename, x_values, colors, labels, interpolation="DISCRET
             r, g, b, a = color
             f.write(f"{val},{r},{g},{b},{a},{label}\n")
 
-def read_qgis_legend(filename):
+def write_qgis_pol_legend(filename, x_values, colors, labels, attribute_name="agg_value", qgis_version="3.38.0-Grenoble"):
+    """
+    Create a QGIS polygon legend (.qml) file with graduated color symbology.
+
+    Parameters:
+        filename (str): Path to save the .qml file
+        x_values (list of float): Upper bounds for each range
+        colors (list of tuple): RGB or RGBA colors as (R,G,B[,A])
+        labels (list of str): Labels for each range
+        attribute_name (str): Attribute used for classification
+        qgis_version (str): QGIS version string
+    """
+
+    # Root element
+    qgis_elem = ET.Element("qgis", version=qgis_version, styleCategories="Symbology")
+
+    # Renderer element
+    renderer = ET.SubElement(qgis_elem, "renderer-v2", {
+        "graduatedMethod": "GraduatedColor",
+        "attr": attribute_name,
+        "symbollevels": "0",
+        "enableorderby": "0",
+        "type": "graduatedSymbol",
+        "forceraster": "0",
+        "referencescale": "-1"
+    })
+
+    # Ranges element
+    ranges_elem = ET.SubElement(renderer, "ranges")
+
+    # Symbols element
+    symbols_elem = ET.SubElement(renderer, "symbols")
+
+    for idx, (upper, color, label) in enumerate(zip(x_values, colors, labels)):
+        # Calculate lower bound (previous upper value or 0 for first)
+        lower = x_values[idx-1] if idx > 0 else 0
+
+        # Add range
+        ET.SubElement(ranges_elem, "range", {
+            "symbol": str(idx),
+            "render": "true",
+            "label": label,
+            "upper": str(upper),
+            "lower": str(lower),
+            "uuid": "{}".format(f"range-{idx}")
+        })
+
+        # Prepare color string
+        if len(color) == 3:
+            color_str = f"{color[0]},{color[1]},{color[2]},255,rgb:{color[0]/255},{color[1]/255},{color[2]/255},1"
+        else:
+            color_str = f"{color[0]},{color[1]},{color[2]},{color[3]},rgb:{color[0]/255},{color[1]/255},{color[2]/255},{color[3]/255}"
+
+        # Add symbol
+        symbol_elem = ET.SubElement(symbols_elem, "symbol", {
+            "frame_rate": "10",
+            "alpha": "1",
+            "force_rhr": "0",
+            "clip_to_extent": "1",
+            "is_animated": "0",
+            "name": str(idx),
+            "type": "fill"
+        })
+
+        layer_elem = ET.SubElement(symbol_elem, "layer", {
+            "pass": "0",
+            "id": f"layer-{idx}",
+            "locked": "0",
+            "enabled": "1",
+            "class": "SimpleFill"
+        })
+
+        option_map = ET.SubElement(layer_elem, "Option", {"type": "Map"})
+        ET.SubElement(option_map, "Option", {
+            "value": color_str,
+            "name": "color",
+            "type": "QString"
+        })
+
+    # Add remaining elements
+    ET.SubElement(renderer, "rotation")
+    ET.SubElement(renderer, "sizescale")
+    ET.SubElement(qgis_elem, "blendMode").text = "0"
+    ET.SubElement(qgis_elem, "featureBlendMode").text = "0"
+    ET.SubElement(qgis_elem, "layerGeometryType").text = "2"
+
+    # Write to file
+    tree = ET.ElementTree(qgis_elem)
+    tree.write(filename, encoding="UTF-8", xml_declaration=True)
+
+    # print(f"QGIS legend file successfully written to {filename}")
+
+
+
+def read_qgis_raster_legend(filename):
     """
     Read cutoff values, colors, and labels from a QGIS legend export file.
 

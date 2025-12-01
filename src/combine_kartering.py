@@ -18,7 +18,7 @@ oxidatie = xr.open_dataarray(input_fns.oxidatie_fn)
 compactie = xr.open_dataarray(input_fns.compactie_fn)
 krimp = xr.open_dataarray(input_fns.krimp_fn)
 
-legends = {Path(fn).stem.split('_')[0]: utils.read_qgis_legend(fn)[0] for fn in input_fns.legend_fns}
+legends = {Path(fn).stem.split('_')[0]: utils.read_qgis_raster_legend(fn)[0] for fn in input_fns.legend_fns}
 
 # Group data using legend values via searchsorted
 oxidatie_grpd = xr.apply_ufunc(

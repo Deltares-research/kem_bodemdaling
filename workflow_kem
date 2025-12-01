@@ -26,13 +26,14 @@ nl_shape_fn = r"P:\gis-data\provincie\2021_provincies_zonder_water.shp"
 base_data_shifted_fn = input_folder / "base_data_shifted.nc"
 lhm_heads_fn = lhm_folder / "lhm_433_heads_l1_{year}.nc"
 lhm_top_fn = lhm_folder / 'TOP_L1_LHM433.tif'
-peilgebieden_fn = input_folder / "peilgebied.gpkg"
+peilgebieden_fn = input_folder / "peilgebieden.gpkg"
 drainage_fn = uitsluiting_folder / "drainage.shp"
 
 #Parameters
 bebouwing_fraction_threshold = 0.5
 water_fraction_threshold = 0.5
 organisch_threshold = 0.25
+min_data_per_peil = 0.8
 
 doorlatend_enums = [0, 1, 5, 6, 7, 8, 9, 11]
 
@@ -45,6 +46,7 @@ oxidatie_years = [2012, 2013, 2015, 2018]
 coarse_namedict = {True: f"coarseres_f{coarsen}", False: "fullres"}
 kem_data_fn = None # initial_result_map / f"kartering_kem_{coarse_namedict[coarsen>1]}.nc"
 kem_output_fn = initial_result_map / f"kem_score.tif"
+kem_masked_fn = masked_result_map / "kem_score_masked.tif"
 
 oxidatie_data_fn = None#initial_result_map / (f"kartering_oxidatie_{coarse_namedict[coarsen>1]}_"+"{year}.nc")
 oxidatie_output_fn = initial_result_map / "oxidatie_{year}_score.tif"
@@ -61,8 +63,10 @@ krim_masked_fn = masked_result_map / "krimp_score_masked.tif"
 output_fn = initial_result_map / "{type}_score.tif"
 masked_output_fn = masked_result_map / "{type}_score_masked.tif"
 
-kem_agg_output = final_result_map / "kem_score_agg_masked.gpkg"
+agg_output = final_result_map / "{type}_score_agg_masked.gpkg"
 comb_kartering_output = final_result_map / "combined_kartering_{year}.tif"
+
+
 
 #masking
 mask_dict = {'kem': ['opnemend', 'bebouwing', 'water', 'nl'],
@@ -90,18 +94,18 @@ factor_weights = {'oxidatie': 1,
            'compactie': 1,
            'krimp': 1}
 
-# rule run_all:
-#     input:
-#         kem_output_fn,
-#         expand(oxidatie_output_fn, year = oxidatie_years),
-#         compactie_output_fn,
-#         krimp_output_fn,
+agg_methods = {'kem': 'most_frequent_by_weight',
+               'oxidatie': 'weighted_average',
+               'compactie': 'weighted_average',
+               'krimp': 'weighted_average'}
+
+
 
 rule run_all:
     input:
-        expand(masked_output_fn, type = additions),
+        expand(agg_output, type = additions),
         expand(legend_output_fn, type = ['oxidatie', 'compactie', 'krimp']),
-        expand(comb_kartering_output, year = oxidatie_years)
+        #expand(comb_kartering_output, year = oxidatie_years)
 
 rule preprocess_input:
     input:
@@ -202,16 +206,18 @@ rule combine_kartering:
     script:
         "src/combine_kartering.py"
 
-rule mask_aggregate_kem:
+rule mask_aggregate_data:
     input:
-        comb_masks_fn = comb_masks_fn,
-        data_fn = kem_output_fn,
+        data_fn = masked_output_fn,
         peilgebieden_fn = peilgebieden_fn,
         drainage_fn = drainage_fn
+    params:
+        min_data_fraction = min_data_per_peil,
+        agg_method = lambda wildcards: agg_methods[wildcards.type.split('_')[0]]
     output:
-        kem_agg_output = kem_agg_output
+        agg_output = agg_output
     script:
-        "src/mask_and_aggregate_kem.py"
+        "src/mask_and_aggregate.py"
 
 
 

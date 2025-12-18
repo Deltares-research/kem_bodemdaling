@@ -7,7 +7,7 @@ import numpy as np
 import utils
 
 if "snakemake" not in globals():
-    snakemake = utils.read_snakemake_rule(utils.SNAKEFILE_PATH, name="kartering_oxidatie")
+    snakemake = utils.read_snakemake_rule(utils.SNAKEFILE_PATH, name="kartering_krimp")
 
 input_fns = snakemake.input
 params = snakemake.params
@@ -26,25 +26,11 @@ def calculate_points_above_gw(adapted_tops, adapted_thickness, gw_stand, lutum_f
 #ondergrond data
 sm = xr.open_dataset(input_fns.atlans_fn).chunk(chunks={"x": 200, "y": 200, 'layer': -1})
 
-###################
-# #ALS IK DE GLG GEBRUIK VAN DE LHM IS DIE HOGER DAN DE L1 TOP? HOE DAN?
-# year = 2022
-# lhm_folder = Path(r"N:\Projects\11209000\11209258\B. Measurements and calculations\GWS analyse\kartering\lhm_data")
-# gw_data_fn = lhm_folder / f"lhm_433_heads_l1_{year}.nc"
-# top_fn = lhm_folder / 'TOP_L1_LHM433.tif'
-# gw_stand_nap = xr.open_dataarray(gw_data_fn).chunk(x=200, y = 200, time = 50)
-# glg_nap = utils.calc_avg_lowest_three(gw_stand_nap)
-# top_l1_da = xr.open_dataarray(top_fn).isel(band=0).drop_vars('band')
-# glg_stand_mv = glg_nap - top_l1_da
-# with ProgressBar():
-#     glg_stand_mv =  glg_stand_mv.interp(x=sm.x, y=sm.y, method='nearest').compute()
-
-
-#DIT IS NIET GOED WAARSCHIJNLIJK!
-##########################
-sm['phreatic_level'] = sm.phreatic_level.where(sm.phreatic_level > -100)
-sm['glg_mv'] = sm.phreatic_level - sm.surface_level
-########################
+#glg uit LHM (is in meter onder maaiveld, dus positief = onder maaiveld)
+glg_da = xr.open_dataarray(input_fns.lhm_glg_fn).chunk(x=200, y = 200)
+sm['glg_mv'] = glg_da.interp(x=sm.x, y=sm.y, method='nearest').compute()
+sm['glg_mv'] = -sm['glg_mv']  #omzetten naar onder maaiveld (negatief onder maaiveld)
+limited_glg = np.maximum(sm['glg_mv'], -2.0)  #limit groundwater level to max 6m depth
 
 tot_thickness = sm.thickness.cumsum('layer').where(sm.thickness.notnull())
 sm['tops_onder_mv'] = tot_thickness - tot_thickness.max('layer')
@@ -52,7 +38,7 @@ sm['bots_onder_mv'] = sm.tops_onder_mv - sm.thickness
 sm['bots_onder_mv'] = xr.where(sm['bots_onder_mv'] > sm.glg_mv, sm['bots_onder_mv'], sm.glg_mv)
 sm = sm.sel(layer=sm.layer[::-1])
 
-sm['klei_fractie'] = xr.where(sm.lithology == 1, 0.1,   # organic
+sm['klei_fractie'] = xr.where(sm.lithology == 1, 0.2,   # organic
      xr.where(sm.lithology == 2, 1.0,    # clay
      xr.where(sm.lithology == 3, 0.35,    # loam
               0))) 
@@ -63,8 +49,8 @@ sm['klei_fractie'] = xr.where(sm.lithology == 1, 0.1,   # organic
 #%%
 
 #shallow points
-top_selection_depth = -0.3
-bottom_selection_depth = -0.6
+top_selection_depth = sm['glg_mv']+0.9
+bottom_selection_depth = sm['glg_mv']+0.6
 shallow_points_per_m = 0.2*100
 
 shallow_tops, shallow_thickness, _ = utils.select_layers(
@@ -78,14 +64,14 @@ shallow_tops, shallow_thickness, _ = utils.select_layers(
 points_shallow= calculate_points_above_gw(
     adapted_tops=shallow_tops,
     adapted_thickness=shallow_thickness,
-    gw_stand=sm['glg_mv'],
+    gw_stand=limited_glg,
     lutum_frac=sm.klei_fractie,
     points_per_cm=shallow_points_per_m
 )
 
 #intermediate points
-top_selection_depth = -0.6
-bottom_selection_depth = -0.9
+top_selection_depth = sm['glg_mv']+0.6
+bottom_selection_depth = sm['glg_mv']+0.3
 intermediate_points_per_m = 0.8*100
 
 intermediate_tops, intermediate_thickness, _ = utils.select_layers(
@@ -99,14 +85,14 @@ intermediate_tops, intermediate_thickness, _ = utils.select_layers(
 points_intermediate= calculate_points_above_gw(
     adapted_tops=intermediate_tops,
     adapted_thickness=intermediate_thickness,
-    gw_stand=sm['glg_mv'],
+    gw_stand=limited_glg,
     lutum_frac=sm.klei_fractie,
     points_per_cm=intermediate_points_per_m
 )
 
 #deep points
-top_selection_depth = -0.9
-bottom_selection_depth = -100
+top_selection_depth = sm['glg_mv']
+bottom_selection_depth = sm['glg_mv'] + 0.3
 deep_points_per_m = 1.0*100
 
 deep_tops, deep_thickness, _ = utils.select_layers(
@@ -120,7 +106,7 @@ deep_tops, deep_thickness, _ = utils.select_layers(
 points_deep= calculate_points_above_gw(
     adapted_tops=deep_tops,
     adapted_thickness=deep_thickness,
-    gw_stand=sm['glg_mv'],
+    gw_stand=limited_glg,
     lutum_frac=sm.klei_fractie,
     points_per_cm=deep_points_per_m
 )

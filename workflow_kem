@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 # Input folders
-base_folder = Path(r"P:\nl2120veen\kartering")
+base_folder = Path(r"N:\Projects\11211500\11211556\B. Measurements and calculations\kartering")
 input_folder = base_folder / "input"
 uitsluiting_folder = input_folder.parent / 'uitsluitingsgebieden'
 result_folder = base_folder / "resultaten"
@@ -26,6 +26,7 @@ nl_shape_fn = r"P:\gis-data\provincie\2021_provincies_zonder_water.shp"
 base_data_shifted_fn = input_folder / "base_data_shifted.nc"
 lhm_heads_fn = lhm_folder / "lhm_433_heads_l1_{year}.nc"
 lhm_top_fn = lhm_folder / 'TOP_L1_LHM433.tif'
+lhm_glg_fn = lhm_folder / 'glg_2010_2019.tif'
 peilgebieden_fn = input_folder / "peilgebieden.gpkg"
 drainage_fn = uitsluiting_folder / "drainage.shp"
 
@@ -33,22 +34,22 @@ drainage_fn = uitsluiting_folder / "drainage.shp"
 bebouwing_fraction_threshold = 0.5
 water_fraction_threshold = 0.5
 organisch_threshold = 0.25
-min_data_per_peil = 0.8
+min_data_per_peil = 0.5
 
 doorlatend_enums = [0, 1, 5, 6, 7, 8, 9, 11]
 
 #Save Parameters
-save = False
-coarsen = 10
+save = True
+coarsen = 10 #resets to integer 1,  but make sure if statement == True
 oxidatie_years = [2012, 2013, 2015, 2018]
 
 #Output files
 coarse_namedict = {True: f"coarseres_f{coarsen}", False: "fullres"}
-kem_data_fn = None # initial_result_map / f"kartering_kem_{coarse_namedict[coarsen>1]}.nc"
+kem_data_fn = initial_result_map / f"kartering_kem_{coarse_namedict[coarsen>1]}.nc"
 kem_output_fn = initial_result_map / f"kem_score.tif"
 kem_masked_fn = masked_result_map / "kem_score_masked.tif"
 
-oxidatie_data_fn = None#initial_result_map / (f"kartering_oxidatie_{coarse_namedict[coarsen>1]}_"+"{year}.nc")
+oxidatie_data_fn = initial_result_map / (f"kartering_oxidatie_{coarse_namedict[coarsen>1]}_"+"{year}.nc")
 oxidatie_output_fn = initial_result_map / "oxidatie_{year}_score.tif"
 oxidatie_masked_fn = masked_result_map / "oxidatie_{year}_score_masked.tif"
 
@@ -99,13 +100,11 @@ agg_methods = {'kem': 'most_frequent_by_weight',
                'compactie': 'weighted_average',
                'krimp': 'weighted_average'}
 
-
-
 rule run_all:
     input:
         expand(agg_output, type = additions),
         expand(legend_output_fn, type = ['oxidatie', 'compactie', 'krimp']),
-        #expand(comb_kartering_output, year = oxidatie_years)
+        expand(comb_kartering_output, year = oxidatie_years)
 
 rule preprocess_input:
     input:
@@ -131,7 +130,7 @@ rule kartering_kem:
         save = save,
         coarsen = coarsen,
     output:
-        #kem_data_fn = kem_data_fn,
+        kem_data_fn = kem_data_fn,
         kem_output_fn = kem_output_fn
     script:
         "src/kartering_kem.py"
@@ -146,25 +145,28 @@ rule kartering_oxidatie:
         save = save,
         coarsen = coarsen,
     output:
-        #oxidatie_data_fn = oxidatie_data_fn,
+        oxidatie_data_fn = oxidatie_data_fn,
         oxidatie_output_fn = oxidatie_output_fn,
     script:
         "src/kartering_oxidatie.py"
 
 rule kartering_compactie:
     input:
-        atlans_fn = atlans_fn
+        "src/kartering_compactie_test.py",
+        atlans_fn = atlans_fn,
+        lhm_glg_fn = lhm_glg_fn
     params:
         coarsen = coarsen,
     output:
         compactie_data_fn = compactie_data_fn,
         compactie_output_fn = compactie_output_fn
     script:
-        "src/kartering_compactie.py"
+        "src/kartering_compactie_test.py"
 
 rule kartering_krimp:
     input:
-        atlans_fn = atlans_fn
+        atlans_fn = atlans_fn,
+        lhm_glg_fn = lhm_glg_fn
     params:
         coarsen = coarsen
     output:

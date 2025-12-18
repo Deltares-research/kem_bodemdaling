@@ -4,7 +4,6 @@
 import xarray as xr
 from pathlib import Path
 import numpy as np
-import geopandas as gpd
 from dask.diagnostics import ProgressBar
 import utils
 
@@ -21,7 +20,7 @@ save_coarse = False
 #load data
 #ondergrond data
 # Optimize chunking for better performance
-sm = xr.open_dataset(input_fns.atlans_fn).chunk(chunks={"x": 500, "y": 500, 'layer': -1})
+sm = xr.open_dataset(input_fns.atlans_fn).chunk(chunks={"x": 100, "y": 100, 'layer': -1})
 tot_thickness = sm.thickness.cumsum('layer').where(sm.thickness.notnull())
 sm['tops_onder_mv'] = tot_thickness - tot_thickness.max('layer')
 sm['bots_onder_mv'] = sm.tops_onder_mv - sm.thickness
@@ -34,7 +33,7 @@ sm['pleistoceen_mask'] = sm.center_onder_mv < pleistoceen_onder_mv
 sm = sm.sel(layer=sm.layer[::-1])
 
 #glg uit LHM (is in meter onder maaiveld, dus positief = onder maaiveld)
-glg_da = xr.open_dataarray(input_fns.lhm_glg_fn).chunk(x=200, y = 200)
+glg_da = xr.open_dataarray(input_fns.lhm_glg_fn).chunk(x=500, y = 500)
 sm['glg_mv'] = glg_da.interp(x=sm.x, y=sm.y, method='nearest').compute()
 sm['glg_mv'] = -sm['glg_mv']  #omzetten naar onder maaiveld (negatief onder maaiveld)
 # %%
@@ -61,30 +60,35 @@ sm['glg_mv'] = -sm['glg_mv']  #omzetten naar onder maaiveld (negatief onder maai
 # test_sm['pleistoceen_mask'] = True
 # test_sm['glg_mv'] = -0.1
 
-sm['min_z_mv'] = -sm.thickness.sum('layer')
+####################
 
 dz = 0.1
-min_z = -sm.thickness.sum('layer').max()
-n_layers = int(np.ceil((0 - min_z) / dz))
+n_layers = int(np.ceil((0 - max_depth) / dz))
 new_thickness = xr.DataArray(np.repeat(dz, n_layers),
                              coords={'layer': np.arange(n_layers)+1})
 new_sm = xr.Dataset({'thickness': new_thickness})
-new_sm['center_onder_mv'] = -new_sm.thickness.cumsum('layer') + (new_sm.thickness / 2)
-sel_layers = []
-for z in new_sm.center_onder_mv:
-    diff = np.abs(sm.center_onder_mv - z)
-    closest_layer = diff.idxmin(dim='layer')
-    sel_layers.append(closest_layer)
-sel_layers_da = xr.concat(sel_layers, dim='layer')
-sel_layers_da = sel_layers_da.chunk({'x': sm.chunks['x'], 'y': sm.chunks['y'], 'layer': -1})
-                             
-# Use vectorized interpolation instead of loop-based selection
-print("Interpolating lithology and pleistoceen_mask to new grid...")
-new_sm['lithology'] = sm['lithology'].interp(layer=sel_layers_da)
-new_sm['pleistoceen_mask'] = sm['pleistoceen_mask'].astype(int).interp(layer=sel_layers_da).astype(bool)
-new_sm['glg_mv'] = sm['glg_mv']
-new_sm = new_sm.where(new_sm.center_onder_mv >= sm.min_z_mv)
+new_sm['tops_onder_mv'] = -new_sm.thickness.cumsum('layer')+ new_sm.thickness
+new_sm['bots_onder_mv'] = new_sm.tops_onder_mv 
+new_sm['center_onder_mv'] = new_sm.bots_onder_mv + (new_sm.thickness / 2)
+new_sm = new_sm.broadcast_like(sm.isel(layer=0))
+new_sm['lithology'] = xr.full_like(new_sm.thickness, np.nan)
+new_sm['pleistoceen_mask'] = xr.full_like(new_sm.thickness, False, dtype=bool)
+new_sm = new_sm.chunk(chunks={"x": 100, "y": 100, 'layer': -1})
 
+for layer in new_sm.layer:
+    l_top = new_sm.tops_onder_mv.sel(layer=layer)
+    l_bot = new_sm.bots_onder_mv.sel(layer=layer)
+    z = (l_top+l_bot).drop_vars('layer')/2
+    
+    l_sm = sm.where((z<sm.tops_onder_mv) & (z>=sm.bots_onder_mv)).max('layer')
+
+    new_sm[['lithology', 'pleistoceen_mask']] = xr.where(new_sm.layer==layer, 
+                                                        l_sm[['lithology', 'pleistoceen_mask']], 
+                                                        new_sm[['lithology', 'pleistoceen_mask']])
+new_sm[['lithology', 'pleistoceen_mask']] = new_sm[['lithology', 'pleistoceen_mask']].transpose('y', 'x', 'layer')
+new_sm['glg_mv'] = sm['glg_mv']
+new_sm['pleistoceen_mask'] = new_sm['pleistoceen_mask'].astype(bool)
+#%%
 sm = new_sm.copy()
 print('starting compactie calculation...')
 # Method 1: Using xarray's where() function for vectorized conditional mapping

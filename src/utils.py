@@ -10,6 +10,7 @@ import geopandas as gpd
 import shapely.geometry as gmt
 import rasterio
 import xml.etree.ElementTree as ET
+import snakemake.io as snakeio
 
 SNAKEFILE_PATH = r"C:\git_repos\bodemdaling\workflow_kem"
 
@@ -58,11 +59,25 @@ def replace_wildcards_in_snakemake(snakemake_obj, replace_dict):
             continue
         items = getattr(snakemake_obj, key)
 
-        for item in items._names.keys():
-            item_str = str(getattr(items, item))
-            for replace_key, replace_val in replace_dict.items():
-                item_str = item_str.replace(replace_key, replace_val)
-            setattr(items, item, item_str)
+        for item_name in items._names.keys():
+            item = getattr(items, item_name)
+            if isinstance(item, snakeio._IOFile):
+                item_str = str(item)
+                for replace_key, replace_val in replace_dict.items():
+                    item_str = item_str.replace(replace_key, replace_val)
+                replace_item = item_str
+            elif isinstance(item, snakeio.Namedlist):
+                item = list(item)
+                for i in range(len(item)):
+                    item_str = str(item[i])
+                    for replace_key, replace_val in replace_dict.items():
+                        item_str = item_str.replace(replace_key, replace_val)
+                    item[i] = item_str
+                replace_item = type(item)(item)
+            else:
+                replace_item = item
+
+            setattr(items, item_name, replace_item)
     return snakemake_obj
 
 def mask_to_geodataframe(mask_da):
